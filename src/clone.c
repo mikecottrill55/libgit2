@@ -441,45 +441,43 @@ int git_clone(
 	const char *local_path,
 	const git_clone_options *options)
 {
-	int retcode = GIT_ERROR;
+	int error = 0;
 	git_repository *repo = NULL;
-	git_clone_options normOptions;
-	int remove_directory_on_failure = 0;
-	git_repository_init_options initOptions = GIT_REPOSITORY_INIT_OPTIONS_INIT;
+	git_clone_options opts;
+	uint32_t rmdir_flags = GIT_RMDIR_REMOVE_FILES;
+	git_repository_init_options init_opts = GIT_REPOSITORY_INIT_OPTIONS_INIT;
 
 	assert(out && url && local_path);
 
-	normalize_options(&normOptions, options, &initOptions);
-	GITERR_CHECK_VERSION(&normOptions, GIT_CLONE_OPTIONS_VERSION, "git_clone_options");
+	normalize_options(&opts, options, &init_opts);
+	GITERR_CHECK_VERSION(&opts, GIT_CLONE_OPTIONS_VERSION, "git_clone_options");
 
 	/* Only clone to a new directory or an empty directory */
 	if (git_path_exists(local_path) && !git_path_is_empty_dir(local_path)) {
 		giterr_set(GITERR_INVALID,
 			"'%s' exists and is not an empty directory", local_path);
-		return GIT_ERROR;
+		return -1;
 	}
 
 	/* Only remove the directory on failure if we create it */
-	remove_directory_on_failure = !git_path_exists(local_path);
+	if (git_path_exists(local_path))
+		rmdir_flags |= GIT_RMDIR_SKIP_ROOT;
 
-	if (!(retcode = git_repository_init_ext(&repo, local_path, normOptions.init_options))) {
-		if ((retcode = setup_remotes_and_fetch(repo, url, &normOptions)) < 0) {
-			/* Failed to fetch; clean up */
-			git_repository_free(repo);
+	if ((error = git_repository_init_ext(
+			&repo, local_path, opts.init_options)) < 0)
+		return error;
 
-			if (remove_directory_on_failure)
-				git_futils_rmdir_r(local_path, NULL, GIT_RMDIR_REMOVE_FILES);
-			else
-				git_futils_cleanupdir_r(local_path);
+	if ((error = setup_remotes_and_fetch(repo, url, &opts)) < 0) {
+		/* Failed to fetch; clean up */
+		git_repository_free(repo);
 
-		} else {
-			*out = repo;
-			retcode = 0;
-		}
+		git_futils_rmdir_r(local_path, NULL, rmdir_flags);
+	} else {
+		*out = repo;
 	}
 
-	if (!retcode && should_checkout(repo, normOptions.bare, &normOptions.checkout_opts))
-		retcode = git_checkout_head(*out, &normOptions.checkout_opts);
+	if (!error && should_checkout(repo, opts.bare, &opts.checkout_opts))
+		error = git_checkout_head(*out, &opts.checkout_opts);
 
-	return retcode;
+	return error;
 }
